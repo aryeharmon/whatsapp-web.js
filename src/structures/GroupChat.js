@@ -54,6 +54,54 @@ class GroupChat extends Chat {
     }
 
     /**
+     * Indicates if this group is a community (parent group)
+     * @type {boolean}
+     */
+    get isCommunity() {
+        return this.groupMetadata.isParentGroup === true;
+    }
+
+    /**
+     * Indicates if this group is a subgroup of a community
+     * @type {boolean}
+     */
+    get isSubgroup() {
+        return !!this.groupMetadata.parentGroup;
+    }
+
+    /**
+     * Gets the parent community ID if this is a subgroup
+     * @type {?string}
+     */
+    get parentGroup() {
+        return this.groupMetadata.parentGroup?._serialized || null;
+    }
+
+    /**
+     * Gets the number of subgroups if this is a community
+     * @type {?number}
+     */
+    get numSubgroups() {
+        return this.groupMetadata.numSubgroups || null;
+    }
+
+    /**
+     * Gets the default subgroup ID if this is a community
+     * @type {?string}
+     */
+    get defaultSubgroup() {
+        return this.groupMetadata.defaultSubgroup?._serialized || null;
+    }
+
+    /**
+     * Gets the general (announcements) subgroup ID if this is a community
+     * @type {?string}
+     */
+    get generalSubgroup() {
+        return this.groupMetadata.generalSubgroup?._serialized || null;
+    }
+
+    /**
      * An object that handles the result for {@link addParticipants} method
      * @typedef {Object} AddParticipantsResult
      * @property {number} code The code of the result
@@ -242,6 +290,127 @@ class GroupChat extends Chat {
             await window.Store.GroupParticipants.demoteParticipants(chat, participants);
             return { status: 200 };
         }, this.id._serialized, participantIds);
+    }
+
+    /**
+     * Promotes participants by IDs to community admins.
+     * Only works on communities (parent groups).
+     * @param {Array<string>} participantIds
+     * @returns {Promise<{ status: number }>} Object with status code indicating if the operation was successful
+     */
+    async promoteCommunityParticipants(participantIds) {
+        return await this.client.pupPage.evaluate(async (chatId, participantIds) => {
+            const chat = await window.WWebJS.getChat(chatId, { getAsModel: false });
+
+            if (!chat.groupMetadata?.isParentGroup) {
+                throw new Error('This method can only be used on communities');
+            }
+
+            const participants = (await Promise.all(participantIds.map(async p => {
+                const { lid, phone } = await window.WWebJS.enforceLidAndPnRetrieval(p);
+
+                return chat.groupMetadata.participants.get(lid?._serialized) ||
+                    chat.groupMetadata.participants.get(phone?._serialized);
+            }))).filter(Boolean);
+
+            await window.Store.GroupParticipants.promoteCommunityParticipants(chat, participants);
+            return { status: 200 };
+        }, this.id._serialized, participantIds);
+    }
+
+    /**
+     * Demotes participants by IDs from community admins.
+     * Only works on communities (parent groups).
+     * @param {Array<string>} participantIds
+     * @returns {Promise<{ status: number }>} Object with status code indicating if the operation was successful
+     */
+    async demoteCommunityParticipants(participantIds) {
+        return await this.client.pupPage.evaluate(async (chatId, participantIds) => {
+            const chat = await window.WWebJS.getChat(chatId, { getAsModel: false });
+
+            if (!chat.groupMetadata?.isParentGroup) {
+                throw new Error('This method can only be used on communities');
+            }
+
+            const participants = (await Promise.all(participantIds.map(async p => {
+                const { lid, phone } = await window.WWebJS.enforceLidAndPnRetrieval(p);
+
+                return chat.groupMetadata.participants.get(lid?._serialized) ||
+                    chat.groupMetadata.participants.get(phone?._serialized);
+            }))).filter(Boolean);
+
+            await window.Store.GroupParticipants.demoteCommunityParticipants(chat, participants);
+            return { status: 200 };
+        }, this.id._serialized, participantIds);
+    }
+
+    /**
+     * Creates a new subgroup within this community.
+     * Only works on communities (parent groups).
+     * @param {string} title The name for the subgroup
+     * @param {Object} [options] Options for creating the subgroup
+     * @param {string} [options.description] The description for the subgroup
+     * @param {Array<string>} [options.participants] Array of participant IDs to add to the subgroup
+     * @returns {Promise<Object>} Object containing the created group info
+     */
+    async createSubgroup(title, options = {}) {
+        return await this.client.pupPage.evaluate(async (communityId, title, options) => {
+            const chat = await window.WWebJS.getChat(communityId, { getAsModel: false });
+
+            if (!chat.groupMetadata?.isParentGroup) {
+                throw new Error('This method can only be used on communities');
+            }
+
+            const communityWid = window.Store.WidFactory.createWid(communityId);
+            const { description, participants = [] } = options;
+
+            const participantWids = participants.map(p => window.Store.WidFactory.createWid(p));
+
+            const result = await window.Store.GroupUtils.createGroup(
+                {
+                    title,
+                    parentGroupId: communityWid,
+                    ...(description && { description })
+                },
+                participantWids
+            );
+
+            return {
+                gid: result.wid?._serialized || result.wid,
+                subject: result.subject,
+                creator: result.creator,
+                participants: result.participants
+            };
+        }, this.id._serialized, title, options);
+    }
+
+    /**
+     * Gets all subgroups of this community.
+     * Only works on communities (parent groups).
+     * @returns {Promise<Array<GroupChat>>} Array of GroupChat objects representing subgroups
+     */
+    async getSubgroups() {
+        const subgroupData = await this.client.pupPage.evaluate(async (communityId) => {
+            const chat = await window.WWebJS.getChat(communityId, { getAsModel: false });
+
+            if (!chat.groupMetadata?.isParentGroup) {
+                throw new Error('This method can only be used on communities');
+            }
+
+            const chats = window.Store.Chat.getModelsArray();
+            const subgroups = chats.filter(c =>
+                c.isGroup &&
+                c.groupMetadata?.parentGroup?._serialized === communityId
+            );
+
+            return subgroups.map(sg => window.WWebJS.getChatModel(sg));
+        }, this.id._serialized);
+
+        const GroupChat = require('./GroupChat');
+        return subgroupData.map(data => {
+            const chat = new GroupChat(this.client, data);
+            return chat;
+        });
     }
 
     /**

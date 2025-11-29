@@ -1122,6 +1122,30 @@ class Client extends EventEmitter {
     }
 
     /**
+     * Get all communities (parent groups) the user is a member of
+     * @returns {Promise<Array<GroupChat>>}
+     */
+    async getCommunities() {
+        const communities = await this.pupPage.evaluate(async () => {
+            // Get all chats and process them through getChatModel first
+            // (which updates groupMetadata) then filter for communities
+            const chats = window.Store.Chat.getModelsArray();
+            const groupChats = chats.filter(c => c.isGroup);
+
+            const processedChats = [];
+            for (const chat of groupChats) {
+                const model = await window.WWebJS.getChatModel(chat);
+                if (model && model.groupMetadata?.isParentGroup) {
+                    processedChats.push(model);
+                }
+            }
+            return processedChats;
+        });
+
+        return communities.map(chat => ChatFactory.create(this, chat));
+    }
+
+    /**
      * Gets all cached {@link Channel} instance
      * @returns {Promise<Array<Channel>>}
      */
