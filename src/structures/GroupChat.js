@@ -309,27 +309,44 @@ class GroupChat extends Chat {
                 throw new Error('This method can only be used on communities');
             }
 
-            // Helper to find participant in community or subgroups, or create participant object
-            const findOrCreateParticipant = async (lid, phone) => {
+            // Helper to find participant in community or subgroups
+            const findParticipant = async (lid, phone) => {
                 // First check if already in community admins list
                 let participant = chat.groupMetadata.participants.get(lid?._serialized) ||
                     chat.groupMetadata.participants.get(phone?._serialized);
 
                 if (participant) return participant;
 
-                // Search in general/announcement subgroup
+                // Get the general/announcement subgroup and force-fetch its metadata
                 const generalSubgroupId = chat.groupMetadata.generalSubgroup?._serialized;
                 if (generalSubgroupId) {
                     try {
-                        await window.Store.GroupQueryAndUpdate({ id: generalSubgroupId });
-                        const generalGroup = await window.WWebJS.getChat(generalSubgroupId, { getAsModel: false });
+                        // Force query the group metadata from server
+                        const metadata = await window.Store.GroupMetadata.queryAndUpdate(
+                            window.Store.WidFactory.createWid(generalSubgroupId)
+                        );
 
-                        participant = generalGroup.groupMetadata?.participants?.get(lid?._serialized) ||
-                            generalGroup.groupMetadata?.participants?.get(phone?._serialized);
+                        if (metadata?.participants) {
+                            participant = metadata.participants.get(lid?._serialized) ||
+                                metadata.participants.get(phone?._serialized);
 
-                        if (participant) return participant;
+                            if (participant) return participant;
+                        }
                     } catch (e) {
-                        // Ignore errors, continue searching
+                        // Try alternative method
+                        try {
+                            await window.Store.GroupQueryAndUpdate({ id: generalSubgroupId });
+                            const generalGroup = window.Store.Chat.get(generalSubgroupId);
+
+                            if (generalGroup?.groupMetadata?.participants) {
+                                participant = generalGroup.groupMetadata.participants.get(lid?._serialized) ||
+                                    generalGroup.groupMetadata.participants.get(phone?._serialized);
+
+                                if (participant) return participant;
+                            }
+                        } catch (e2) {
+                            // Continue searching
+                        }
                     }
                 }
 
@@ -341,19 +358,17 @@ class GroupChat extends Chat {
 
                 for (const sg of subgroups) {
                     try {
-                        await window.Store.GroupQueryAndUpdate({ id: sg.id._serialized });
-                        participant = sg.groupMetadata?.participants?.get(lid?._serialized) ||
-                            sg.groupMetadata?.participants?.get(phone?._serialized);
-                        if (participant) return participant;
-                    } catch (e) {
-                        // Ignore errors, continue searching
-                    }
-                }
+                        // Force query each subgroup
+                        const metadata = await window.Store.GroupMetadata.queryAndUpdate(sg.id);
 
-                // If not found anywhere, create a minimal participant object with the LID
-                // This allows promoting users who are in subgroups we haven't loaded
-                if (lid) {
-                    return { id: lid, isAdmin: false, isSuperAdmin: false };
+                        if (metadata?.participants) {
+                            participant = metadata.participants.get(lid?._serialized) ||
+                                metadata.participants.get(phone?._serialized);
+                            if (participant) return participant;
+                        }
+                    } catch (e) {
+                        // Continue to next subgroup
+                    }
                 }
 
                 return null;
@@ -361,11 +376,11 @@ class GroupChat extends Chat {
 
             const participants = (await Promise.all(participantIds.map(async p => {
                 const { lid, phone } = await window.WWebJS.enforceLidAndPnRetrieval(p);
-                return await findOrCreateParticipant(lid, phone);
+                return await findParticipant(lid, phone);
             }))).filter(Boolean);
 
             if (participants.length === 0) {
-                throw new Error('No valid participants found. Could not resolve participant IDs.');
+                throw new Error('No valid participants found. Make sure they are members of a community subgroup.');
             }
 
             await window.Store.GroupParticipants.promoteCommunityParticipants(chat, participants);
