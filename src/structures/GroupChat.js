@@ -302,16 +302,57 @@ class GroupChat extends Chat {
         return await this.client.pupPage.evaluate(async (chatId, participantIds) => {
             const chat = await window.WWebJS.getChat(chatId, { getAsModel: false });
 
+            // Ensure group metadata is loaded and updated
+            await window.Store.GroupQueryAndUpdate({ id: chatId });
+
             if (!chat.groupMetadata?.isParentGroup) {
                 throw new Error('This method can only be used on communities');
             }
 
+            // Helper to find participant in community or subgroups
+            const findParticipant = async (lid, phone) => {
+                // First check if already in community admins list
+                let participant = chat.groupMetadata.participants.get(lid?._serialized) ||
+                    chat.groupMetadata.participants.get(phone?._serialized);
+
+                if (participant) return participant;
+
+                // Search in general/announcement subgroup
+                const generalSubgroupId = chat.groupMetadata.generalSubgroup?._serialized;
+                if (generalSubgroupId) {
+                    const generalGroup = await window.WWebJS.getChat(generalSubgroupId, { getAsModel: false });
+                    await window.Store.GroupQueryAndUpdate({ id: generalSubgroupId });
+
+                    participant = generalGroup.groupMetadata?.participants?.get(lid?._serialized) ||
+                        generalGroup.groupMetadata?.participants?.get(phone?._serialized);
+
+                    if (participant) return participant;
+                }
+
+                // Search in other subgroups as fallback
+                const allChats = window.Store.Chat.getModelsArray();
+                const subgroups = allChats.filter(c =>
+                    c.isGroup && c.groupMetadata?.parentGroup?._serialized === chatId
+                );
+
+                for (const sg of subgroups) {
+                    await window.Store.GroupQueryAndUpdate({ id: sg.id._serialized });
+                    participant = sg.groupMetadata?.participants?.get(lid?._serialized) ||
+                        sg.groupMetadata?.participants?.get(phone?._serialized);
+                    if (participant) return participant;
+                }
+
+                return null;
+            };
+
             const participants = (await Promise.all(participantIds.map(async p => {
                 const { lid, phone } = await window.WWebJS.enforceLidAndPnRetrieval(p);
-
-                return chat.groupMetadata.participants.get(lid?._serialized) ||
-                    chat.groupMetadata.participants.get(phone?._serialized);
+                return await findParticipant(lid, phone);
             }))).filter(Boolean);
+
+            if (participants.length === 0) {
+                throw new Error('No valid participants found. Make sure they are members of a community subgroup.');
+            }
 
             await window.Store.GroupParticipants.promoteCommunityParticipants(chat, participants);
             return { status: 200 };
@@ -328,6 +369,9 @@ class GroupChat extends Chat {
         return await this.client.pupPage.evaluate(async (chatId, participantIds) => {
             const chat = await window.WWebJS.getChat(chatId, { getAsModel: false });
 
+            // Ensure group metadata is loaded and updated
+            await window.Store.GroupQueryAndUpdate({ id: chatId });
+
             if (!chat.groupMetadata?.isParentGroup) {
                 throw new Error('This method can only be used on communities');
             }
@@ -335,9 +379,14 @@ class GroupChat extends Chat {
             const participants = (await Promise.all(participantIds.map(async p => {
                 const { lid, phone } = await window.WWebJS.enforceLidAndPnRetrieval(p);
 
+                // For demote, participant should already be in the community admins list
                 return chat.groupMetadata.participants.get(lid?._serialized) ||
                     chat.groupMetadata.participants.get(phone?._serialized);
             }))).filter(Boolean);
+
+            if (participants.length === 0) {
+                throw new Error('No valid participants found. Make sure they are community admins.');
+            }
 
             await window.Store.GroupParticipants.demoteCommunityParticipants(chat, participants);
             return { status: 200 };
