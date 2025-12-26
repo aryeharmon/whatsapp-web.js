@@ -463,6 +463,147 @@ class GroupChat extends Chat {
     }
 
     /**
+     * Gets all members of this community by fetching from the general/announcement subgroup.
+     * Only works on communities (parent groups).
+     * For communities, the parent group only contains admins - actual members are in subgroups.
+     * @returns {Promise<Array<GroupParticipant>>} Array of participant objects
+     */
+    async getCommunityMembers() {
+        return await this.client.pupPage.evaluate(async (communityId) => {
+            // Force refresh community metadata from server first
+            await window.Store.GroupQueryAndUpdate({ id: communityId });
+
+            const chat = await window.WWebJS.getChat(communityId, { getAsModel: false });
+
+            if (!chat.groupMetadata?.isParentGroup) {
+                throw new Error('This method can only be used on communities');
+            }
+
+            // Get the general/announcement subgroup ID - this is where all members are
+            let generalSubgroupId = chat.groupMetadata?.generalSubgroup?._serialized ||
+                                    chat.groupMetadata?.defaultSubgroup?._serialized ||
+                                    chat.generalSubgroup ||
+                                    chat.defaultSubgroup;
+
+            // If still not found, try to find it from the local chat list
+            if (!generalSubgroupId) {
+                const allChats = window.Store.Chat.getModelsArray();
+
+                // Find subgroups by checking parentGroup or defaultSubgroup flag
+                // Note: Don't use c.isGroup as it may be undefined on raw models
+                const subgroups = [];
+                for (const c of allChats) {
+                    // Check if it's a group by looking at the ID suffix or groupMetadata existence
+                    if (!c.groupMetadata || !c.id?._serialized?.endsWith('@g.us')) continue;
+
+                    const gm = c.groupMetadata;
+                    const parentId = gm.parentGroup?._serialized || gm.parentGroup;
+
+                    // Check if this is a subgroup of our community
+                    if (parentId === communityId) {
+                        // Check if this is the default/general subgroup
+                        if (gm.defaultSubgroup === true || gm.generalSubgroup === true) {
+                            generalSubgroupId = c.id._serialized;
+                            break;
+                        }
+                        subgroups.push({
+                            id: c.id._serialized,
+                            count: gm.participants?.length || gm.participants?.size || gm.size || 0
+                        });
+                    }
+                }
+
+                // If we found subgroups but none marked as default, pick the largest
+                if (!generalSubgroupId && subgroups.length > 0) {
+                    subgroups.sort((a, b) => b.count - a.count);
+                    generalSubgroupId = subgroups[0].id;
+                }
+            }
+
+            if (!generalSubgroupId) {
+                throw new Error('Could not find the general subgroup for this community');
+            }
+
+            // Force refresh the general subgroup metadata to get current members
+            await window.Store.GroupQueryAndUpdate({ id: generalSubgroupId });
+
+            const generalGroup = window.Store.Chat.get(generalSubgroupId);
+            if (!generalGroup?.groupMetadata?.participants) {
+                throw new Error('Could not fetch participants from general subgroup');
+            }
+
+            const participants = generalGroup.groupMetadata.participants.getModelsArray?.() ||
+                                generalGroup.groupMetadata.participants;
+
+            return participants.map(p => ({
+                id: p.id?._serialized || p._serialized,
+                isAdmin: p.isAdmin || false,
+                isSuperAdmin: p.isSuperAdmin || false
+            }));
+        }, this.id._serialized);
+    }
+
+    /**
+     * Gets the general/announcement subgroup ID for this community.
+     * Only works on communities (parent groups).
+     * @returns {Promise<string|null>} The general subgroup ID or null if not found
+     */
+    async getGeneralSubgroupId() {
+        return await this.client.pupPage.evaluate(async (communityId) => {
+            // Force refresh community metadata from server
+            await window.Store.GroupQueryAndUpdate({ id: communityId });
+
+            const chat = await window.WWebJS.getChat(communityId, { getAsModel: false });
+
+            if (!chat.groupMetadata?.isParentGroup) {
+                return null;
+            }
+
+            // Try to get from metadata first (check multiple possible locations)
+            let generalSubgroupId = chat.groupMetadata?.generalSubgroup?._serialized ||
+                                    chat.groupMetadata?.defaultSubgroup?._serialized ||
+                                    chat.generalSubgroup ||
+                                    chat.defaultSubgroup;
+
+            // If not found, search local chats for subgroups of this community
+            if (!generalSubgroupId) {
+                const allChats = window.Store.Chat.getModelsArray();
+
+                // Find subgroups by checking parentGroup or defaultSubgroup flag
+                // Note: Don't use c.isGroup as it may be undefined on raw models
+                const subgroups = [];
+                for (const c of allChats) {
+                    // Check if it's a group by looking at the ID suffix or groupMetadata existence
+                    if (!c.groupMetadata || !c.id?._serialized?.endsWith('@g.us')) continue;
+
+                    const gm = c.groupMetadata;
+                    const parentId = gm.parentGroup?._serialized || gm.parentGroup;
+
+                    // Check if this is a subgroup of our community
+                    if (parentId === communityId) {
+                        // Check if this is the default/general subgroup
+                        if (gm.defaultSubgroup === true || gm.generalSubgroup === true) {
+                            return c.id._serialized;
+                        }
+                        subgroups.push({
+                            id: c.id._serialized,
+                            count: gm.participants?.length || gm.participants?.size || gm.size || 0
+                        });
+                    }
+                }
+
+                // If we found subgroups but none marked as default, pick the largest
+                if (subgroups.length > 0) {
+                    subgroups.sort((a, b) => b.count - a.count);
+                    generalSubgroupId = subgroups[0].id;
+                }
+            }
+
+            return generalSubgroupId || null;
+        }, this.id._serialized);
+    }
+
+    /**
      * Gets all subgroups of this community.
      * Only works on communities (parent groups).
      * @returns {Promise<Array<GroupChat>>} Array of GroupChat objects representing subgroups
