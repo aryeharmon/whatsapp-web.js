@@ -1284,7 +1284,19 @@ class Client extends EventEmitter {
      */
     async acceptInvite(inviteCode) {
         const res = await this.pupPage.evaluate(async inviteCode => {
-            return await window.Store.GroupInvite.joinGroupViaInvite(inviteCode);
+            try {
+                return await window.Store.GroupInvite.joinGroupViaInvite(inviteCode);
+            } catch (e) {
+                // Handle "already-exists" error - user is already in the group
+                if (e.message === 'already-exists') {
+                    // Get the group info from the invite to find the group ID
+                    const inviteInfo = await window.Store.GroupInvite.queryGroupInvite(inviteCode);
+                    if (inviteInfo && inviteInfo.id) {
+                        return { gid: inviteInfo.id, alreadyMember: true };
+                    }
+                }
+                throw e;
+            }
         }, inviteCode);
 
         return res.gid._serialized;
