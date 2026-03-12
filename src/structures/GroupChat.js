@@ -424,93 +424,140 @@ class GroupChat extends Chat {
      * @returns {Promise<{ status: number }>} Object with status code indicating if the operation was successful
      */
     async promoteCommunityParticipants(participantIds) {
-        return await this.client.pupPage.evaluate(async (chatId, participantIds) => {
-            const chat = await window.WWebJS.getChat(chatId, { getAsModel: false });
+        return await this.client.pupPage.evaluate(
+            async (chatId, participantIds) => {
+                const chat = await window.WWebJS.getChat(chatId, {
+                    getAsModel: false,
+                });
 
-            // Ensure group metadata is loaded and updated
-            await window.Store.GroupQueryAndUpdate({ id: chatId });
+                // Ensure group metadata is loaded and updated
+                await window.Store.GroupQueryAndUpdate({ id: chatId });
 
-            if (!chat.groupMetadata?.isParentGroup) {
-                throw new Error('This method can only be used on communities');
-            }
+                if (!chat.groupMetadata?.isParentGroup) {
+                    throw new Error(
+                        'This method can only be used on communities',
+                    );
+                }
 
-            // Helper to find participant in community or subgroups
-            const findParticipant = async (lid, phone) => {
-                // First check if already in community admins list
-                let participant = chat.groupMetadata.participants.get(lid?._serialized) ||
-                    chat.groupMetadata.participants.get(phone?._serialized);
+                // Helper to find participant in community or subgroups
+                const findParticipant = async (lid, phone) => {
+                    // First check if already in community admins list
+                    let participant =
+                        chat.groupMetadata.participants.get(lid?._serialized) ||
+                        chat.groupMetadata.participants.get(phone?._serialized);
 
-                if (participant) return participant;
+                    if (participant) return participant;
 
-                // Get the general/announcement subgroup and force-fetch its metadata
-                const generalSubgroupId = chat.groupMetadata.generalSubgroup?._serialized;
-                if (generalSubgroupId) {
-                    try {
-                        // Force query the group metadata from server
-                        const metadata = await window.Store.GroupMetadata.queryAndUpdate(
-                            window.Store.WidFactory.createWid(generalSubgroupId)
-                        );
-
-                        if (metadata?.participants) {
-                            participant = metadata.participants.get(lid?._serialized) ||
-                                metadata.participants.get(phone?._serialized);
-
-                            if (participant) return participant;
-                        }
-                    } catch (e) {
-                        // Try alternative method
+                    // Get the general/announcement subgroup and force-fetch its metadata
+                    const generalSubgroupId =
+                        chat.groupMetadata.generalSubgroup?._serialized;
+                    if (generalSubgroupId) {
                         try {
-                            await window.Store.GroupQueryAndUpdate({ id: generalSubgroupId });
-                            const generalGroup = window.Store.Chat.get(generalSubgroupId);
+                            // Force query the group metadata from server
+                            const metadata =
+                                await window.Store.GroupMetadata.queryAndUpdate(
+                                    window.Store.WidFactory.createWid(
+                                        generalSubgroupId,
+                                    ),
+                                );
 
-                            if (generalGroup?.groupMetadata?.participants) {
-                                participant = generalGroup.groupMetadata.participants.get(lid?._serialized) ||
-                                    generalGroup.groupMetadata.participants.get(phone?._serialized);
+                            if (metadata?.participants) {
+                                participant =
+                                    metadata.participants.get(
+                                        lid?._serialized,
+                                    ) ||
+                                    metadata.participants.get(
+                                        phone?._serialized,
+                                    );
 
                                 if (participant) return participant;
                             }
-                        } catch (e2) {
-                            // Continue searching
+                        } catch (e) {
+                            // Try alternative method
+                            try {
+                                await window.Store.GroupQueryAndUpdate({
+                                    id: generalSubgroupId,
+                                });
+                                const generalGroup =
+                                    window.Store.Chat.get(generalSubgroupId);
+
+                                if (generalGroup?.groupMetadata?.participants) {
+                                    participant =
+                                        generalGroup.groupMetadata.participants.get(
+                                            lid?._serialized,
+                                        ) ||
+                                        generalGroup.groupMetadata.participants.get(
+                                            phone?._serialized,
+                                        );
+
+                                    if (participant) return participant;
+                                }
+                            } catch (e2) {
+                                // Continue searching
+                            }
                         }
                     }
+
+                    // Search in other subgroups as fallback
+                    const allChats = window.Store.Chat.getModelsArray();
+                    const subgroups = allChats.filter(
+                        (c) =>
+                            c.isGroup &&
+                            c.groupMetadata?.parentGroup?._serialized ===
+                                chatId,
+                    );
+
+                    for (const sg of subgroups) {
+                        try {
+                            // Force query each subgroup
+                            const metadata =
+                                await window.Store.GroupMetadata.queryAndUpdate(
+                                    sg.id,
+                                );
+
+                            if (metadata?.participants) {
+                                participant =
+                                    metadata.participants.get(
+                                        lid?._serialized,
+                                    ) ||
+                                    metadata.participants.get(
+                                        phone?._serialized,
+                                    );
+                                if (participant) return participant;
+                            }
+                        } catch (e) {
+                            // Continue to next subgroup
+                        }
+                    }
+
+                    return null;
+                };
+
+                const participants = (
+                    await Promise.all(
+                        participantIds.map(async (p) => {
+                            const { lid, phone } =
+                                await window.WWebJS.enforceLidAndPnRetrieval(p);
+                            return await findParticipant(lid, phone);
+                        }),
+                    )
+                ).filter(Boolean);
+
+                if (participants.length === 0) {
+                    throw new Error(
+                        'No valid participants found. Make sure they are members of a community subgroup.',
+                    );
                 }
 
-                // Search in other subgroups as fallback
-                const allChats = window.Store.Chat.getModelsArray();
-                const subgroups = allChats.filter(c =>
-                    c.isGroup && c.groupMetadata?.parentGroup?._serialized === chatId
+                await window.Store.GroupParticipants.promoteCommunityParticipants(
+                    chat,
+                    participants,
                 );
-
-                for (const sg of subgroups) {
-                    try {
-                        // Force query each subgroup
-                        const metadata = await window.Store.GroupMetadata.queryAndUpdate(sg.id);
-
-                        if (metadata?.participants) {
-                            participant = metadata.participants.get(lid?._serialized) ||
-                                metadata.participants.get(phone?._serialized);
-                            if (participant) return participant;
-                        }
-                    } catch (e) {
-                        // Continue to next subgroup
-                    }
-                }
-
-                return null;
-            };
-
-            const participants = (await Promise.all(participantIds.map(async p => {
-                const { lid, phone } = await window.WWebJS.enforceLidAndPnRetrieval(p);
-                return await findParticipant(lid, phone);
-            }))).filter(Boolean);
-
-            if (participants.length === 0) {
-                throw new Error('No valid participants found. Make sure they are members of a community subgroup.');
-            }
-
-            await window.Store.GroupParticipants.promoteCommunityParticipants(chat, participants);
-            return { status: 200 };
-        }, this.id._serialized, participantIds);
+                return { status: 200 };
+            },
+            this.id._serialized,
+            participantIds,
+        );
     }
 
     /**
@@ -520,31 +567,55 @@ class GroupChat extends Chat {
      * @returns {Promise<{ status: number }>} Object with status code indicating if the operation was successful
      */
     async demoteCommunityParticipants(participantIds) {
-        return await this.client.pupPage.evaluate(async (chatId, participantIds) => {
-            const chat = await window.WWebJS.getChat(chatId, { getAsModel: false });
+        return await this.client.pupPage.evaluate(
+            async (chatId, participantIds) => {
+                const chat = await window.WWebJS.getChat(chatId, {
+                    getAsModel: false,
+                });
 
-            // Ensure group metadata is loaded and updated
-            await window.Store.GroupQueryAndUpdate({ id: chatId });
+                // Ensure group metadata is loaded and updated
+                await window.Store.GroupQueryAndUpdate({ id: chatId });
 
-            if (!chat.groupMetadata?.isParentGroup) {
-                throw new Error('This method can only be used on communities');
-            }
+                if (!chat.groupMetadata?.isParentGroup) {
+                    throw new Error(
+                        'This method can only be used on communities',
+                    );
+                }
 
-            const participants = (await Promise.all(participantIds.map(async p => {
-                const { lid, phone } = await window.WWebJS.enforceLidAndPnRetrieval(p);
+                const participants = (
+                    await Promise.all(
+                        participantIds.map(async (p) => {
+                            const { lid, phone } =
+                                await window.WWebJS.enforceLidAndPnRetrieval(p);
 
-                // For demote, participant should already be in the community admins list
-                return chat.groupMetadata.participants.get(lid?._serialized) ||
-                    chat.groupMetadata.participants.get(phone?._serialized);
-            }))).filter(Boolean);
+                            // For demote, participant should already be in the community admins list
+                            return (
+                                chat.groupMetadata.participants.get(
+                                    lid?._serialized,
+                                ) ||
+                                chat.groupMetadata.participants.get(
+                                    phone?._serialized,
+                                )
+                            );
+                        }),
+                    )
+                ).filter(Boolean);
 
-            if (participants.length === 0) {
-                throw new Error('No valid participants found. Make sure they are community admins.');
-            }
+                if (participants.length === 0) {
+                    throw new Error(
+                        'No valid participants found. Make sure they are community admins.',
+                    );
+                }
 
-            await window.Store.GroupParticipants.demoteCommunityParticipants(chat, participants);
-            return { status: 200 };
-        }, this.id._serialized, participantIds);
+                await window.Store.GroupParticipants.demoteCommunityParticipants(
+                    chat,
+                    participants,
+                );
+                return { status: 200 };
+            },
+            this.id._serialized,
+            participantIds,
+        );
     }
 
     /**
@@ -557,34 +628,46 @@ class GroupChat extends Chat {
      * @returns {Promise<Object>} Object containing the created group info
      */
     async createSubgroup(title, options = {}) {
-        return await this.client.pupPage.evaluate(async (communityId, title, options) => {
-            const chat = await window.WWebJS.getChat(communityId, { getAsModel: false });
+        return await this.client.pupPage.evaluate(
+            async (communityId, title, options) => {
+                const chat = await window.WWebJS.getChat(communityId, {
+                    getAsModel: false,
+                });
 
-            if (!chat.groupMetadata?.isParentGroup) {
-                throw new Error('This method can only be used on communities');
-            }
+                if (!chat.groupMetadata?.isParentGroup) {
+                    throw new Error(
+                        'This method can only be used on communities',
+                    );
+                }
 
-            const communityWid = window.Store.WidFactory.createWid(communityId);
-            const { description, participants = [] } = options;
+                const communityWid =
+                    window.Store.WidFactory.createWid(communityId);
+                const { description, participants = [] } = options;
 
-            const participantWids = participants.map(p => window.Store.WidFactory.createWid(p));
+                const participantWids = participants.map((p) =>
+                    window.Store.WidFactory.createWid(p),
+                );
 
-            const result = await window.Store.GroupUtils.createGroup(
-                {
-                    title,
-                    parentGroupId: communityWid,
-                    ...(description && { description })
-                },
-                participantWids
-            );
+                const result = await window.Store.GroupUtils.createGroup(
+                    {
+                        title,
+                        parentGroupId: communityWid,
+                        ...(description && { description }),
+                    },
+                    participantWids,
+                );
 
-            return {
-                gid: result.wid?._serialized || result.wid,
-                subject: result.subject,
-                creator: result.creator,
-                participants: result.participants
-            };
-        }, this.id._serialized, title, options);
+                return {
+                    gid: result.wid?._serialized || result.wid,
+                    subject: result.subject,
+                    creator: result.creator,
+                    participants: result.participants,
+                };
+            },
+            this.id._serialized,
+            title,
+            options,
+        );
     }
 
     /**
@@ -598,17 +681,20 @@ class GroupChat extends Chat {
             // Force refresh community metadata from server first
             await window.Store.GroupQueryAndUpdate({ id: communityId });
 
-            const chat = await window.WWebJS.getChat(communityId, { getAsModel: false });
+            const chat = await window.WWebJS.getChat(communityId, {
+                getAsModel: false,
+            });
 
             if (!chat.groupMetadata?.isParentGroup) {
                 throw new Error('This method can only be used on communities');
             }
 
             // Get the general/announcement subgroup ID - this is where all members are
-            let generalSubgroupId = chat.groupMetadata?.generalSubgroup?._serialized ||
-                                    chat.groupMetadata?.defaultSubgroup?._serialized ||
-                                    chat.generalSubgroup ||
-                                    chat.defaultSubgroup;
+            let generalSubgroupId =
+                chat.groupMetadata?.generalSubgroup?._serialized ||
+                chat.groupMetadata?.defaultSubgroup?._serialized ||
+                chat.generalSubgroup ||
+                chat.defaultSubgroup;
 
             // If still not found, try to find it from the local chat list
             if (!generalSubgroupId) {
@@ -619,21 +705,33 @@ class GroupChat extends Chat {
                 const subgroups = [];
                 for (const c of allChats) {
                     // Check if it's a group by looking at the ID suffix or groupMetadata existence
-                    if (!c.groupMetadata || !c.id?._serialized?.endsWith('@g.us')) continue;
+                    if (
+                        !c.groupMetadata ||
+                        !c.id?._serialized?.endsWith('@g.us')
+                    )
+                        continue;
 
                     const gm = c.groupMetadata;
-                    const parentId = gm.parentGroup?._serialized || gm.parentGroup;
+                    const parentId =
+                        gm.parentGroup?._serialized || gm.parentGroup;
 
                     // Check if this is a subgroup of our community
                     if (parentId === communityId) {
                         // Check if this is the default/general subgroup
-                        if (gm.defaultSubgroup === true || gm.generalSubgroup === true) {
+                        if (
+                            gm.defaultSubgroup === true ||
+                            gm.generalSubgroup === true
+                        ) {
                             generalSubgroupId = c.id._serialized;
                             break;
                         }
                         subgroups.push({
                             id: c.id._serialized,
-                            count: gm.participants?.length || gm.participants?.size || gm.size || 0
+                            count:
+                                gm.participants?.length ||
+                                gm.participants?.size ||
+                                gm.size ||
+                                0,
                         });
                     }
                 }
@@ -646,7 +744,9 @@ class GroupChat extends Chat {
             }
 
             if (!generalSubgroupId) {
-                throw new Error('Could not find the general subgroup for this community');
+                throw new Error(
+                    'Could not find the general subgroup for this community',
+                );
             }
 
             // Force refresh the general subgroup metadata to get current members
@@ -654,16 +754,19 @@ class GroupChat extends Chat {
 
             const generalGroup = window.Store.Chat.get(generalSubgroupId);
             if (!generalGroup?.groupMetadata?.participants) {
-                throw new Error('Could not fetch participants from general subgroup');
+                throw new Error(
+                    'Could not fetch participants from general subgroup',
+                );
             }
 
-            const participants = generalGroup.groupMetadata.participants.getModelsArray?.() ||
-                                generalGroup.groupMetadata.participants;
+            const participants =
+                generalGroup.groupMetadata.participants.getModelsArray?.() ||
+                generalGroup.groupMetadata.participants;
 
-            return participants.map(p => ({
+            return participants.map((p) => ({
                 id: p.id?._serialized || p._serialized,
                 isAdmin: p.isAdmin || false,
-                isSuperAdmin: p.isSuperAdmin || false
+                isSuperAdmin: p.isSuperAdmin || false,
             }));
         }, this.id._serialized);
     }
@@ -678,17 +781,20 @@ class GroupChat extends Chat {
             // Force refresh community metadata from server
             await window.Store.GroupQueryAndUpdate({ id: communityId });
 
-            const chat = await window.WWebJS.getChat(communityId, { getAsModel: false });
+            const chat = await window.WWebJS.getChat(communityId, {
+                getAsModel: false,
+            });
 
             if (!chat.groupMetadata?.isParentGroup) {
                 return null;
             }
 
             // Try to get from metadata first (check multiple possible locations)
-            let generalSubgroupId = chat.groupMetadata?.generalSubgroup?._serialized ||
-                                    chat.groupMetadata?.defaultSubgroup?._serialized ||
-                                    chat.generalSubgroup ||
-                                    chat.defaultSubgroup;
+            let generalSubgroupId =
+                chat.groupMetadata?.generalSubgroup?._serialized ||
+                chat.groupMetadata?.defaultSubgroup?._serialized ||
+                chat.generalSubgroup ||
+                chat.defaultSubgroup;
 
             // If not found, search local chats for subgroups of this community
             if (!generalSubgroupId) {
@@ -699,20 +805,32 @@ class GroupChat extends Chat {
                 const subgroups = [];
                 for (const c of allChats) {
                     // Check if it's a group by looking at the ID suffix or groupMetadata existence
-                    if (!c.groupMetadata || !c.id?._serialized?.endsWith('@g.us')) continue;
+                    if (
+                        !c.groupMetadata ||
+                        !c.id?._serialized?.endsWith('@g.us')
+                    )
+                        continue;
 
                     const gm = c.groupMetadata;
-                    const parentId = gm.parentGroup?._serialized || gm.parentGroup;
+                    const parentId =
+                        gm.parentGroup?._serialized || gm.parentGroup;
 
                     // Check if this is a subgroup of our community
                     if (parentId === communityId) {
                         // Check if this is the default/general subgroup
-                        if (gm.defaultSubgroup === true || gm.generalSubgroup === true) {
+                        if (
+                            gm.defaultSubgroup === true ||
+                            gm.generalSubgroup === true
+                        ) {
                             return c.id._serialized;
                         }
                         subgroups.push({
                             id: c.id._serialized,
-                            count: gm.participants?.length || gm.participants?.size || gm.size || 0
+                            count:
+                                gm.participants?.length ||
+                                gm.participants?.size ||
+                                gm.size ||
+                                0,
                         });
                     }
                 }
@@ -734,24 +852,33 @@ class GroupChat extends Chat {
      * @returns {Promise<Array<GroupChat>>} Array of GroupChat objects representing subgroups
      */
     async getSubgroups() {
-        const subgroupData = await this.client.pupPage.evaluate(async (communityId) => {
-            const chat = await window.WWebJS.getChat(communityId, { getAsModel: false });
+        const subgroupData = await this.client.pupPage.evaluate(
+            async (communityId) => {
+                const chat = await window.WWebJS.getChat(communityId, {
+                    getAsModel: false,
+                });
 
-            if (!chat.groupMetadata?.isParentGroup) {
-                throw new Error('This method can only be used on communities');
-            }
+                if (!chat.groupMetadata?.isParentGroup) {
+                    throw new Error(
+                        'This method can only be used on communities',
+                    );
+                }
 
-            const chats = window.Store.Chat.getModelsArray();
-            const subgroups = chats.filter(c =>
-                c.isGroup &&
-                c.groupMetadata?.parentGroup?._serialized === communityId
-            );
+                const chats = window.Store.Chat.getModelsArray();
+                const subgroups = chats.filter(
+                    (c) =>
+                        c.isGroup &&
+                        c.groupMetadata?.parentGroup?._serialized ===
+                            communityId,
+                );
 
-            return subgroups.map(sg => window.WWebJS.getChatModel(sg));
-        }, this.id._serialized);
+                return subgroups.map((sg) => window.WWebJS.getChatModel(sg));
+            },
+            this.id._serialized,
+        );
 
         const GroupChat = require('./GroupChat');
-        return subgroupData.map(data => {
+        return subgroupData.map((data) => {
             const chat = new GroupChat(this.client, data);
             return chat;
         });

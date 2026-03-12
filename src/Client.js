@@ -181,12 +181,15 @@ class Client extends EventEmitter {
         });
 
         // Detect logout: if we were previously ready but now need authentication
-        const isUnpairedState = (s) => s === 'UNPAIRED' || s === 'UNPAIRED_IDLE';
+        const isUnpairedState = (s) =>
+            s === 'UNPAIRED' || s === 'UNPAIRED_IDLE';
         if (needAuthentication && this._readyEmitted) {
             // Debounce: WhatsApp can briefly appear unpaired during reload
-            await new Promise(r => setTimeout(r, 1500));
+            await new Promise((r) => setTimeout(r, 1500));
 
-            const stateNow = await this.pupPage.evaluate(() => window.AuthStore?.AppState?.state);
+            const stateNow = await this.pupPage.evaluate(
+                () => window.AuthStore?.AppState?.state,
+            );
 
             if (!isUnpairedState(stateNow)) {
                 // False alarm: session restored after brief unpaired state
@@ -325,89 +328,98 @@ class Client extends EventEmitter {
                 try {
                     const authEventPayload =
                         await this.authStrategy.getAuthEventPayload();
-                /**
-                 * Emitted when authentication is successful
-                 * @event Client#authenticated
-                 */
-                this.emit(Events.AUTHENTICATED, authEventPayload);
-
-                const injected = await this.pupPage.evaluate(async () => {
-                    return typeof window.WWebJS !== 'undefined';
-                });
-
-                if (!injected) {
-                    if (
-                        this.options.webVersionCache.type === 'local' &&
-                        this.currentIndexHtml
-                    ) {
-                        const { type: webCacheType, ...webCacheOptions } =
-                            this.options.webVersionCache;
-                        const webCache = WebCacheFactory.createWebCache(
-                            webCacheType,
-                            webCacheOptions,
-                        );
-
-                        await webCache.persist(this.currentIndexHtml, version);
-                    }
-
-                    //Load util functions (serializers, helper functions)
-                    await this.pupPage.evaluate(LoadUtils);
-
-                    let start = Date.now();
-                    let res = false;
-                    while (start > Date.now() - 30000) {
-                        // Check window.WWebJS Injection
-                        res = await this.pupPage.evaluate(
-                            'window.WWebJS != undefined',
-                        );
-                        if (res) {
-                            break;
-                        }
-                        await new Promise((r) => setTimeout(r, 200));
-                    }
-                    if (!res) {
-                        throw new Error('WWebJS injection timeout - ready event cannot be emitted');
-                    }
-
                     /**
-                     * Current connection information
-                     * @type {ClientInfo}
+                     * Emitted when authentication is successful
+                     * @event Client#authenticated
                      */
-                    this.info = new ClientInfo(
-                        this,
-                        await this.pupPage.evaluate(() => {
-                            return {
-                                ...window
-                                    .require('WAWebConnModel')
-                                    .Conn.serialize(),
-                                wid:
-                                    window
-                                        .require('WAWebUserPrefsMeUser')
-                                        .getMaybeMePnUser() ||
-                                    window
-                                        .require('WAWebUserPrefsMeUser')
-                                        .getMaybeMeLidUser(),
-                            };
-                        }),
-                    );
+                    this.emit(Events.AUTHENTICATED, authEventPayload);
 
-                    this.interface = new InterfaceController(this);
+                    const injected = await this.pupPage.evaluate(async () => {
+                        return typeof window.WWebJS !== 'undefined';
+                    });
 
-                    await this.attachEventListeners();
-                }
-                /**
-                 * Emitted when the client has initialized and is ready to receive messages.
-                 * @event Client#ready
-                 */
-                this._readyEmitted = true;
-                this.emit(Events.READY);
-                this.authStrategy.afterAuthReady();
+                    if (!injected) {
+                        if (
+                            this.options.webVersionCache.type === 'local' &&
+                            this.currentIndexHtml
+                        ) {
+                            const { type: webCacheType, ...webCacheOptions } =
+                                this.options.webVersionCache;
+                            const webCache = WebCacheFactory.createWebCache(
+                                webCacheType,
+                                webCacheOptions,
+                            );
+
+                            await webCache.persist(
+                                this.currentIndexHtml,
+                                version,
+                            );
+                        }
+
+                        //Load util functions (serializers, helper functions)
+                        await this.pupPage.evaluate(LoadUtils);
+
+                        let start = Date.now();
+                        let res = false;
+                        while (start > Date.now() - 30000) {
+                            // Check window.WWebJS Injection
+                            res = await this.pupPage.evaluate(
+                                'window.WWebJS != undefined',
+                            );
+                            if (res) {
+                                break;
+                            }
+                            await new Promise((r) => setTimeout(r, 200));
+                        }
+                        if (!res) {
+                            throw new Error(
+                                'WWebJS injection timeout - ready event cannot be emitted',
+                            );
+                        }
+
+                        /**
+                         * Current connection information
+                         * @type {ClientInfo}
+                         */
+                        this.info = new ClientInfo(
+                            this,
+                            await this.pupPage.evaluate(() => {
+                                return {
+                                    ...window
+                                        .require('WAWebConnModel')
+                                        .Conn.serialize(),
+                                    wid:
+                                        window
+                                            .require('WAWebUserPrefsMeUser')
+                                            .getMaybeMePnUser() ||
+                                        window
+                                            .require('WAWebUserPrefsMeUser')
+                                            .getMaybeMeLidUser(),
+                                };
+                            }),
+                        );
+
+                        this.interface = new InterfaceController(this);
+
+                        await this.attachEventListeners();
+                    }
+                    /**
+                     * Emitted when the client has initialized and is ready to receive messages.
+                     * @event Client#ready
+                     */
+                    this._readyEmitted = true;
+                    this.emit(Events.READY);
+                    this.authStrategy.afterAuthReady();
                 } catch (err) {
                     // Emit error event so users can handle initialization failures
                     // Without this, errors in this callback silently prevent ready from firing
                     // See: https://github.com/pedroslopez/whatsapp-web.js/issues/5685
-                    const error = err instanceof Error ? err : new Error(String(err));
-                    console.error('[wwebjs] Error in onAppStateHasSyncedEvent:', error.message);
+                    const error =
+                        err instanceof Error ? err : new Error(String(err));
+                    console.error(
+                        '[wwebjs] Error in onAppStateHasSyncedEvent:',
+                        error.message,
+                    );
                     this.emit(Events.AUTHENTICATION_FAILURE, error.message);
                 }
             },
@@ -437,7 +449,9 @@ class Client extends EventEmitter {
         // Check if page lost its listener registration state (e.g., after page navigation/reload)
         // If so, reset the client-side flag to allow re-registration
         // See: https://github.com/pedroslopez/whatsapp-web.js/issues/5717
-        const pageHasListeners = await this.pupPage.evaluate(() => !!window._authListenersRegistered);
+        const pageHasListeners = await this.pupPage.evaluate(
+            () => !!window._authListenersRegistered,
+        );
         if (!pageHasListeners) {
             this._authEventListenersInjected = false;
         }
@@ -1044,7 +1058,9 @@ class Client extends EventEmitter {
 
         await this.pupPage.evaluate(() => {
             if (!window.WWebJS) {
-                console.warn('[wwebjs] WWebJS not available, skipping event listener registration');
+                console.warn(
+                    '[wwebjs] WWebJS not available, skipping event listener registration',
+                );
                 return;
             }
 
@@ -1260,7 +1276,7 @@ class Client extends EventEmitter {
                 // Page may already be closed or navigated away
             }
             // Give browser time to flush any pending IndexedDB writes
-            await new Promise(resolve => setTimeout(resolve, 3000));
+            await new Promise((resolve) => setTimeout(resolve, 3000));
         }
         const browser = this.pupBrowser;
         const isConnected = browser?.isConnected?.();
@@ -1642,7 +1658,7 @@ class Client extends EventEmitter {
             // Get all chats and process them through getChatModel first
             // (which updates groupMetadata) then filter for communities
             const chats = window.Store.Chat.getModelsArray();
-            const groupChats = chats.filter(c => c.isGroup);
+            const groupChats = chats.filter((c) => c.isGroup);
 
             const processedChats = [];
             for (const chat of groupChats) {
@@ -1654,7 +1670,7 @@ class Client extends EventEmitter {
             return processedChats;
         });
 
-        return communities.map(chat => ChatFactory.create(this, chat));
+        return communities.map((chat) => ChatFactory.create(this, chat));
     }
 
     /**

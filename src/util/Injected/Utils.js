@@ -967,10 +967,13 @@ exports.LoadUtils = () => {
             model.isReadOnly = chat.groupMetadata.announce;
 
             // Add community-related fields that may not be in serialize()
-            model.groupMetadata.isParentGroup = chat.groupMetadata.isParentGroup;
+            model.groupMetadata.isParentGroup =
+                chat.groupMetadata.isParentGroup;
             model.groupMetadata.parentGroup = chat.groupMetadata.parentGroup;
-            model.groupMetadata.defaultSubgroup = chat.groupMetadata.defaultSubgroup;
-            model.groupMetadata.generalSubgroup = chat.groupMetadata.generalSubgroup;
+            model.groupMetadata.defaultSubgroup =
+                chat.groupMetadata.defaultSubgroup;
+            model.groupMetadata.generalSubgroup =
+                chat.groupMetadata.generalSubgroup;
             model.groupMetadata.numSubgroups = chat.groupMetadata.numSubgroups;
         }
 
