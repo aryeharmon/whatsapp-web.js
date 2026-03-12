@@ -38,4 +38,4 @@ async function exposeFunctionIfAbsent(page, name, fn) {
     }
 }
 
-module.exports = {exposeFunctionIfAbsent};
+module.exports = { exposeFunctionIfAbsent };
