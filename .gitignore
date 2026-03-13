@@ -78,3 +78,6 @@ typings/
 # IDE's
 .idea
 .vscode
+
+# Personal test scripts
+test-*.js
