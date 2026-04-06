@@ -103,7 +103,7 @@ class Message extends Base {
          * @type {string}
          */
         this.deviceType =
-            typeof data.id.id === 'string' && data.id.id.length > 21
+            typeof data.id.id === 'string' && data.id.id.length > 25
                 ? 'android'
                 : typeof data.id.id === 'string' &&
                     data.id.id.substring(0, 2) === '3A'
@@ -403,7 +403,10 @@ class Message extends Base {
     async getMentions() {
         return await Promise.all(
             this.mentionedIds.map(
-                async (m) => await this.client.getContactById(m),
+                async (m) =>
+                    await this.client.getContactById(
+                        typeof m === 'string' ? m : m._serialized,
+                    ),
             ),
         );
     }
@@ -485,10 +488,9 @@ class Message extends Base {
                             .Msg.getMessagesById([messageId])
                     )?.messages?.[0];
                 if (!msg) return null;
-                await window.require('WAWebSendReactionMsgAction')(
-                    msg,
-                    reaction,
-                );
+                await window
+                    .require('WAWebSendReactionMsgAction')
+                    .sendReactionToMsg(msg, reaction);
             },
             this.id._serialized,
             reaction,
