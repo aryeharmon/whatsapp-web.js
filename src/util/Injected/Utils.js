@@ -542,6 +542,14 @@ exports.LoadUtils = () => {
             ...extraOptions,
         };
 
+        // MediaData is a model whose private __x_id field collides with Msg's
+        // internal id field when its enumerable properties are spread above,
+        // breaking getValidatedSender() during Msg initialization. The real
+        // MsgKey is set as `id` in the literal; only __x_id leaks, because
+        // `id` itself is a prototype getter and spread does not copy those.
+        // Refs: https://github.com/wwebjs/whatsapp-web.js/pull/201923
+        delete message.__x_id;
+
         // Bot's won't reply if canonicalUrl is set (linking)
         if (botOptions) {
             delete message.canonicalUrl;
