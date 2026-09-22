@@ -1110,8 +1110,11 @@ class GroupChat extends Chat {
     async revokeInvite() {
         const codeRes = await this.client.pupPage.evaluate(async (chatId) => {
             const chatWid = window.require('WAWebWidFactory').createWid(chatId);
+            // resetGroupInviteCode lives in WAWebGroupInviteJob, not
+            // WAWebGroupQueryJob (verified against WA Web 2.3000.1027545035);
+            // the old module resolves fine but has no such method.
             const mod = await window.WWebJS.requireLazyOrThrow(
-                'WAWebGroupQueryJob',
+                'WAWebGroupInviteJob',
                 ['WAWebGroupInviteLinkDrawerLoadable'],
             );
             return await mod.resetGroupInviteCode(chatWid);
