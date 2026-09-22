@@ -1058,21 +1058,30 @@ exports.LoadUtils = () => {
 
         model.lastMessage = null;
         if (model.msgs && model.msgs.length) {
-            const lastMessage = chat.lastReceivedKey
-                ? window
-                      .require('WAWebCollections')
-                      .Msg.get(chat.lastReceivedKey._serialized) ||
-                  (
-                      await window
+            // Msg.getMessagesById can hit IndexedDB with an undefined key and
+            // throw "DataError: No key or key range specified". getChats and
+            // getChatById map this over every chat inside a Promise.all, so a
+            // single bad chat rejects the whole batch. A chat without a
+            // resolvable last message is not fatal: leave lastMessage null.
+            try {
+                const lastMessage = chat.lastReceivedKey
+                    ? window
                           .require('WAWebCollections')
-                          .Msg.getMessagesById([
-                              chat.lastReceivedKey._serialized,
-                          ])
-                  )?.messages?.[0]
-                : null;
-            lastMessage &&
-                (model.lastMessage =
-                    window.WWebJS.getMessageModel(lastMessage));
+                          .Msg.get(chat.lastReceivedKey._serialized) ||
+                      (
+                          await window
+                              .require('WAWebCollections')
+                              .Msg.getMessagesById([
+                                  chat.lastReceivedKey._serialized,
+                              ])
+                      )?.messages?.[0]
+                    : null;
+                lastMessage &&
+                    (model.lastMessage =
+                        window.WWebJS.getMessageModel(lastMessage));
+            } catch (ignoredError) {
+                // model.lastMessage stays null
+            }
         }
 
         delete model.msgs;
