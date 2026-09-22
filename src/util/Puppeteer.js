@@ -28,7 +28,7 @@ async function exposeFunctionIfAbsent(page, name, fn) {
             try {
                 await page.removeExposedFunction(name);
                 await page.exposeFunction(name, fn);
-            } catch (removeErr) {
+            } catch (ignoredError) {
                 // If removal fails, the binding is still usable from the previous expose
                 // This can happen in older Puppeteer versions
             }

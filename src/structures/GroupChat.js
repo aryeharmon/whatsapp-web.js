@@ -257,13 +257,10 @@ class GroupChat extends Chat {
                         if (
                             rpcResult.name ===
                                 'ParticipantRequestCodeCanBeSent' &&
-                            (userChat =
-                                window
-                                    .require('WAWebCollections')
-                                    .Chat.get(pWid) ||
-                                (await window
-                                    .require('WAWebCollections')
-                                    .Chat.find(pWid)))
+                            (userChat = await window.WWebJS.getChat(
+                                pWid._serialized,
+                                { getAsModel: false },
+                            ))
                         ) {
                             const groupName =
                                 group.formattedTitle || group.name;
@@ -472,7 +469,7 @@ class GroupChat extends Chat {
 
                                 if (participant) return participant;
                             }
-                        } catch (e) {
+                        } catch (ignoredError) {
                             // Try alternative method
                             try {
                                 await window.Store.GroupQueryAndUpdate({
@@ -492,7 +489,7 @@ class GroupChat extends Chat {
 
                                     if (participant) return participant;
                                 }
-                            } catch (e2) {
+                            } catch (ignoredError) {
                                 // Continue searching
                             }
                         }
@@ -525,7 +522,7 @@ class GroupChat extends Chat {
                                     );
                                 if (participant) return participant;
                             }
-                        } catch (e) {
+                        } catch (ignoredError) {
                             // Continue to next subgroup
                         }
                     }
