@@ -1089,9 +1089,11 @@ class GroupChat extends Chat {
     async getInviteCode() {
         const codeRes = await this.client.pupPage.evaluate(async (chatId) => {
             try {
-                return await window
-                    .require('WAWebMexFetchGroupInviteCodeJob')
-                    .fetchMexGroupInviteCode(chatId);
+                const mod = await window.WWebJS.requireLazyOrThrow(
+                    'WAWebMexFetchGroupInviteCodeJob',
+                    ['WAWebGroupInviteLinkDrawerLoadable'],
+                );
+                return await mod.fetchMexGroupInviteCode(chatId);
             } catch (err) {
                 if (err.name === 'ServerStatusCodeError') return undefined;
                 throw err;
@@ -1106,11 +1108,13 @@ class GroupChat extends Chat {
      * @returns {Promise<string>} New invite code
      */
     async revokeInvite() {
-        const codeRes = await this.client.pupPage.evaluate((chatId) => {
+        const codeRes = await this.client.pupPage.evaluate(async (chatId) => {
             const chatWid = window.require('WAWebWidFactory').createWid(chatId);
-            return window
-                .require('WAWebGroupQueryJob')
-                .resetGroupInviteCode(chatWid);
+            const mod = await window.WWebJS.requireLazyOrThrow(
+                'WAWebGroupQueryJob',
+                ['WAWebGroupInviteLinkDrawerLoadable'],
+            );
+            return await mod.resetGroupInviteCode(chatWid);
         }, this.id._serialized);
 
         return codeRes.code;

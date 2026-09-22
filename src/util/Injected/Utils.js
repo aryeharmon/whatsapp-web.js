@@ -4,6 +4,65 @@ exports.LoadUtils = () => {
     window.WWebJS = {};
 
     /**
+     * Resolves a WhatsApp Web module, forcing its lazy bundle to load if needed.
+     *
+     * WhatsApp Web >= 2.3000 code-splits parts of the app into bundles that are
+     * only pulled in when the UI that needs them is opened. Until then
+     * `window.require(name)` returns `undefined` rather than throwing, which
+     * surfaces as "Cannot read properties of undefined (reading '<method>')".
+     * Each lazy bundle has a companion `*Loadable` module exposing
+     * `requireBundle()`, so we force those and retry.
+     * https://github.com/wwebjs/whatsapp-web.js/issues/201916
+     *
+     * @param {string} moduleName The module to resolve
+     * @param {string[]} [loadableNames] `*Loadable` modules whose bundles may define it
+     * @returns {Promise<Object|undefined>} The module, or undefined if unavailable
+     */
+    window.WWebJS.requireLazy = async (moduleName, loadableNames = []) => {
+        const tryRequire = (name) => {
+            try {
+                return window.require(name);
+            } catch (ignoredError) {
+                return undefined;
+            }
+        };
+
+        // Fast path: bundle already loaded, behave exactly as window.require.
+        const loaded = tryRequire(moduleName);
+        if (loaded) return loaded;
+
+        for (const loadableName of loadableNames) {
+            const loadable = tryRequire(loadableName);
+            if (typeof loadable?.requireBundle !== 'function') continue;
+            try {
+                await loadable.requireBundle();
+            } catch (ignoredError) {
+                // Best effort: a failed bundle load still lets us retry below,
+                // and lets the next candidate have a go.
+            }
+            const resolved = tryRequire(moduleName);
+            if (resolved) return resolved;
+        }
+
+        return undefined;
+    };
+
+    /**
+     * Same as {@link window.WWebJS.requireLazy}, but throws a diagnosable error
+     * instead of returning undefined, so callers fail with the module name
+     * rather than a TypeError on a property of undefined.
+     */
+    window.WWebJS.requireLazyOrThrow = async (moduleName, loadableNames) => {
+        const mod = await window.WWebJS.requireLazy(moduleName, loadableNames);
+        if (!mod) {
+            throw new Error(
+                `WhatsApp Web module '${moduleName}' is unavailable: its lazy bundle could not be loaded`,
+            );
+        }
+        return mod;
+    };
+
+    /**
      * Helper function that compares between two WWeb versions. Its purpose is to help the developer to choose the correct code implementation depending on the comparison value and the WWeb version.
      * @param {string} lOperand The left operand for the WWeb version string to compare with
      * @param {string} operator The comparison operator

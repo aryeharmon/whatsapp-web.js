@@ -1985,16 +1985,24 @@ class Client extends EventEmitter {
      */
     async acceptInvite(inviteCode) {
         const res = await this.pupPage.evaluate(async (inviteCode) => {
+            // The invite-link drawer is the UI that joins via link, so its
+            // bundle is the one that defines these jobs once code-split.
+            const inviteLoadables = ['WAWebGroupInviteLinkDrawerLoadable'];
             try {
-                return await window
-                    .require('WAWebGroupInviteJob')
-                    .joinGroupViaInvite(inviteCode);
+                const mod = await window.WWebJS.requireLazyOrThrow(
+                    'WAWebGroupInviteJob',
+                    inviteLoadables,
+                );
+                return await mod.joinGroupViaInvite(inviteCode);
             } catch (e) {
                 // Handle "already-exists" error - user is already in the group
                 if (e.message === 'already-exists') {
-                    const inviteInfo = await window
-                        .require('WAWebGroupQueryJob')
-                        .queryGroupInvite(inviteCode);
+                    const queryMod = await window.WWebJS.requireLazyOrThrow(
+                        'WAWebGroupQueryJob',
+                        inviteLoadables,
+                    );
+                    const inviteInfo =
+                        await queryMod.queryGroupInvite(inviteCode);
                     if (inviteInfo && inviteInfo.id) {
                         return { gid: inviteInfo.id, alreadyMember: true };
                     }
@@ -2091,14 +2099,16 @@ class Client extends EventEmitter {
         return this.pupPage.evaluate(async (inviteInfo) => {
             let { groupId, fromId, inviteCode, inviteCodeExp } = inviteInfo;
             let userWid = window.require('WAWebWidFactory').createWid(fromId);
-            return await window
-                .require('WAWebGroupInviteV4Job')
-                .joinGroupViaInviteV4(
-                    inviteCode,
-                    String(inviteCodeExp),
-                    groupId,
-                    userWid,
-                );
+            const mod = await window.WWebJS.requireLazyOrThrow(
+                'WAWebGroupInviteV4Job',
+                ['WAWebGroupInviteLinkDrawerLoadable'],
+            );
+            return await mod.joinGroupViaInviteV4(
+                inviteCode,
+                String(inviteCodeExp),
+                groupId,
+                userWid,
+            );
         }, inviteInfo);
     }
 
